@@ -8,6 +8,7 @@
   ],
   "dependencies": {
     "axios": "^1.4.0",
+    "iconv-lite": "^0.7.0",
     "papaparse": "^5.4.1"
   },
   "author": {
@@ -19,7 +20,6 @@
   "repository": {},
   "keywords": [],
   "scripts": {},
-  "devDependencies": {},
   "engines": {
     "node": ">= 8"
   }
