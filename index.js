@@ -103,12 +103,6 @@ function formatDoc(doc, format) {
 }
 
 /**
- * The main process to handle data
- * @param {object}   setting
- * @param {number}   index   - only for broadcast use
- * @param {function} resolve - passed from promise
- */
-/**
  * A higher-order function that returns a callback for handling parsed data.
  * This callback processes, filters, formats, and finalizes the data according to the provided settings.
  * It's designed to be used as the `complete` callback in papaparse or called manually for JSON data.
