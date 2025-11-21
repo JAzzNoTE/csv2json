@@ -28,6 +28,23 @@ function formatNumber(numType, value, allowNull) {
 }
 
 /**
+ * Asynchronously reads a file and decodes its content using the specified encoding.
+ * It handles errors by logging a warning and returning undefined.
+ * @param {string} file - The path to the file to be read.
+ * @param {string} encoding - The character encoding to use for decoding the file content (e.g., 'utf8', 'big5').
+ * @returns {Promise<string|undefined>} A promise that resolves with the decoded file content as a string, or undefined if an error occurs.
+ */
+// For independent from any customed module, here did not import 'file-proxy'
+async function readFile(file, encoding) {
+  try {
+    let buffer = await fs.promises.readFile(file);
+    return iconv.decode(buffer, encoding);
+  } catch (err) {
+    console.warn(`csv2json FAIL | Read file error: ${file}`, err);
+  }
+}
+
+/**
  * Formats a single data object (document) based on a set of formatting rules.
  * @param {object} doc - The data object to be formatted, typically representing a row from the CSV/JSON.
  * @param {object} format - An object containing formatting rules.
@@ -42,7 +59,7 @@ function formatNumber(numType, value, allowNull) {
  * @param {Array<string>} [format.toString] - An array of property names whose values should be explicitly cast to strings, preserving original whitespace.
  * @returns {object} The new, formatted data object.
  */
-function _formatDoc(doc, format) {
+function formatDoc(doc, format) {
   let docNew = {};
   let numType;
 
@@ -85,23 +102,26 @@ function _formatDoc(doc, format) {
   return docNew;
 }
 
-// For independed from any customed module, here did not import 'file.js'
-async function _readFile(file, encoding) {
-  try {
-    let buffer = await fs.promises.readFile(file);
-    return iconv.decode(buffer, encoding);
-  } catch (err) {
-    console.warn(`csv2json | Read file error: ${file}`, err);
-  }
-}
-
 /**
  * The main process to handle data
  * @param {object}   setting
  * @param {number}   index   - only for broadcast use
  * @param {function} resolve - passed from promise
  */
-function _complete(setting, /*optional*/index, resolve) {
+/**
+ * A higher-order function that returns a callback for handling parsed data.
+ * This callback processes, filters, formats, and finalizes the data according to the provided settings.
+ * It's designed to be used as the `complete` callback in papaparse or called manually for JSON data.
+ * @param {object} setting - The configuration object for the conversion process.
+ * @param {object} setting.filter
+ * @param {object} setting.format
+ * @param {function} setting.success
+ * @param {string} setting.eventName
+ * @param {number} [index] - An optional index, used for broadcasting events when processing multiple files.
+ * @param {function} [resolve] - The `resolve` function from a Promise, to be called with the final data.
+ * @returns {function} A callback function that takes the parsed results and processes them.
+ */
+function _complete(setting, index, resolve) {
   return function (results, file) {
     let data, dataFormatted;
     //console.log('csv2json._complete', results) // For dev
@@ -112,7 +132,7 @@ function _complete(setting, /*optional*/index, resolve) {
     else data = results;
 
     data = (setting.filter !== undefined) ? _filter(data, setting.filter, setting.format) : data;
-    dataFormatted = data.map(v => _formatDoc(v, setting.format));
+    dataFormatted = data.map(v => formatDoc(v, setting.format));
     dataFormatted = (setting.success) ? setting.success(dataFormatted) : dataFormatted;
 
     _broadcastEvent(dataFormatted, index, setting.eventName);
@@ -133,12 +153,23 @@ function _complete(setting, /*optional*/index, resolve) {
   }
 
   function _broadcastEvent(data, index, /*optional*/eventName) {
-    eventName = eventName || eeNode_cache.eventList.csv2jsonComplete;
+    eventName = eventName || 'csv2json:completed';
     // unsolved: if use async/await, sometimes eeNode_cache will be undefined
     if (eeNode_cache !== undefined) eeNode_cache.emit(eventName, data, index);
   }
 }
 
+/**
+ * Loads and processes JSON data from a string, file, or URL.
+ * @param {object} setting - The configuration object for loading and processing the JSON data.
+ * @param {string} [setting.json] - A raw JSON string or object to be processed.
+ * @param {string} [setting.file] - The file path to a local JSON file.
+ * @param {string} [setting.download] - The URL to download the JSON data from.
+ * @param {string} [setting.encoding='utf8'] - The character encoding for reading the file or downloaded data. Defaults to 'utf8'.
+ * @param {function} [setting.before] - A function to preprocess the raw JSON data before it's processed.
+ * @param {number} [index] - An optional index, typically used when processing multiple files in a batch, for event broadcasting.
+ * @returns {Promise<Array<object>>} A Promise that resolves with the processed data as an array of objects, or rejects on error.
+ */
 async function loadJSON(setting, /*optional*/index) {
   // The default encoding is 'UTF8', or you can specify 'big5'
   setting.encoding = setting.encoding || 'utf8';
@@ -147,7 +178,7 @@ async function loadJSON(setting, /*optional*/index) {
     if (setting.json) return _runJSON(setting.json);
 
     if (setting.file) {
-      let data = await _readFile(setting.file, setting.encoding);
+      let data = await readFile(setting.file, setting.encoding);
       return _runJSON(data);
     }
 
@@ -170,6 +201,18 @@ async function loadJSON(setting, /*optional*/index) {
   });
 }
 
+/**
+ * Loads and processes CSV data from a string, file, or URL.
+ * @param {object} setting - The configuration object for loading and processing the CSV data.
+ * @param {string} [setting.csvString] - A raw CSV string to be processed.
+ * @param {string} [setting.file] - The file path to a local CSV file.
+ * @param {string} [setting.download] - The URL to download the CSV data from.
+ * @param {string} [setting.encoding='utf8'] - The character encoding for reading the file or downloaded data. Defaults to 'utf8'.
+ * @param {boolean} [setting.header=true] - Specifies if the first row of the CSV is the header. Defaults to true.
+ * @param {function} [setting.before] - A function to preprocess the raw CSV string before it's parsed.
+ * @param {number} [index] - An optional index, typically used when processing multiple files in a batch, for event broadcasting.
+ * @returns {Promise<Array<object>>} A Promise that resolves with the processed data as an array of objects, or rejects on error.
+ */
 function parseCSV(setting, /*optional*/index) {
   // The default encoding is 'UTF8', or you can specify 'big5'
   setting.encoding = setting.encoding || 'utf8';
@@ -190,7 +233,7 @@ function parseCSV(setting, /*optional*/index) {
     if (setting.csvString || setting.csvString?.length == 0) return _runCSV(setting.csvString);
 
     if (setting.file) {
-      csvString = await _readFile(setting.file, setting.encoding);
+      csvString = await readFile(setting.file, setting.encoding);
       return _runCSV(csvString);
     }
 
@@ -244,17 +287,20 @@ function parseCSV(setting, /*optional*/index) {
  *    若傳入csv字串，傳入csvParser(papaparse)解析；若傳入json格式，進入格式化程序
  * 		@param {string}  config.csvString              - 如果傳入csv，直接解析
  * 		@param {string}  config.json                   - 如果傳入json，直接讀取資料
+ * 		@param {boolean} config.header
  * 
  * Ⅱ.資料傳入_complete處理
  * Ⅱ.1 _filter指定欄位屬性，剔除不符合的列
  * Ⅱ.2 _formatData對資料格式化，傳入format物件設定
- * 		@param {array}   config.format.keep            - 剔除不保留的屬性 TODO:考慮加入正規表達式比對
+ * 		@param {object}  config.format
+ * 		@param {array}   config.format.keep            - 剔除不保留的屬性 // TODO:考慮加入正規表達式比對
  * 		@param {boolean} config.format.allowSpace      - 移除空白字元
  * 		@param {array}   config.format.comma2Array     - 將屬性由含','的字串分割為array
  * 		@param {array}   config.format.semicolon2Array - 將屬性由含';'的字串分割為array
  * 		@param {array}   config.format.toBool          - 轉換屬性為布林值（容許傳入array）
  * 		@param {array}   config.format.toInt           - 轉換字串為整數，如果設定allowNull則屬性可為null值
  * 		@param {array}   config.format.toFloat         - 轉換字串為浮點數，如果設定allowNull則屬性可為null值
+ * 		@param {object}  config.filter
  * 
  * Ⅲ.執行使用者自訂的資料處理函式success
  *    @param {function} config.before                - 在csv字串解析前，對raw string做處理，最後需回傳csvString
@@ -262,9 +308,12 @@ function parseCSV(setting, /*optional*/index) {
  * 
  * Ⅳ.回覆處理結果
  * 		@param {string}  config.eventName			         - 廣播事件名稱
+ * 		@param {string}  config.eventNameError         - 廣播錯誤
  */
 function main(config, eeNode, /*optional*/type) {
   eeNode_cache = eeNode;
+
+  const eventNameError = config.eventNameError || 'csv2json:error';
 
   //! Notice: The only use of i is to broadcast it
   if (Array.isArray(config)) return config.forEach((setting, i) => execute(setting, i));
@@ -285,8 +334,7 @@ function main(config, eeNode, /*optional*/type) {
       if (!type || typeof type !== 'string') return console.warn('csv2json Error | Need to specify type "json" or "csv"', config);
 
       promise = (type.toLowerCase() === 'csv') ? parseCSV(config, index) : loadJSON(config, index);
-      // TODO: 改為需指定錯誤事件名稱，或直接拋出錯誤→不然根本不知道要接收'csv2json:error'，等用到再開發此功能
-      promise.catch(err => { eeNode.emit('csv2json:error', err); });
+      promise.catch(err => { eeNode.emit(eventNameError, err); });
       return promise; // TODO: 未測試
     }
 
