@@ -61,9 +61,10 @@ async function readFile(file, encoding) {
  */
 function formatDoc(doc, format) {
   let docNew = {};
-  let numType;
 
   for (let n in doc) {
+    let numType; // DEBUG: numType must declare here
+
     if (doc[n] === "") continue;
 
     // Delete unwanted data
@@ -89,7 +90,7 @@ function formatDoc(doc, format) {
 
     if (format.toInt && format.toInt.some(name => name === n)) numType = 'int';
     else if (format.toFloat && format.toFloat.some(name => name === n)) numType = 'float';
-
+    
     if (numType) {
       docNew[n] = formatNumber(numType, doc[n], format.allowNull);
       continue;
